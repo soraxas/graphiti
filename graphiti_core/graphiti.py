@@ -389,6 +389,7 @@ class Graphiti:
         episode_body: str,
         source_description: str,
         reference_time: datetime,
+        context_prompt: str,
         source: EpisodeType = EpisodeType.message,
         group_id: str | None = None,
         uuid: str | None = None,
@@ -501,7 +502,7 @@ class Graphiti:
             # Extract entities as nodes
 
             extracted_nodes = await extract_nodes(
-                self.clients, episode, previous_episodes, entity_types, excluded_entity_types
+                self.clients, episode, previous_episodes, entity_types, excluded_entity_types, context_prompt=context_prompt
             )
 
             # Extract edges and resolve nodes
@@ -521,6 +522,7 @@ class Graphiti:
                     edge_type_map or edge_type_map_default,
                     group_id,
                     edge_types,
+                    context_prompt=context_prompt,
                 ),
                 max_coroutines=self.max_coroutines,
             )
@@ -589,6 +591,7 @@ class Graphiti:
     async def add_episode_bulk(
         self,
         bulk_episodes: list[RawEpisode],
+        context_prompt: str,
         group_id: str | None = None,
         entity_types: dict[str, type[BaseModel]] | None = None,
         excluded_entity_types: list[str] | None = None,
@@ -687,6 +690,7 @@ class Graphiti:
                 edge_types=edge_types,
                 entity_types=entity_types,
                 excluded_entity_types=excluded_entity_types,
+                context_prompt=context_prompt,
             )
 
             # Dedupe extracted nodes in memory

@@ -21,7 +21,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Coroutine
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, TypeVar
 
 from graphiti_core.embedder.client import EMBEDDING_DIM
 
@@ -30,7 +30,7 @@ try:
 
     _HAS_OPENSEARCH = True
 except ImportError:
-    OpenSearch = None
+    OpenSearch = TypeVar("T")
     helpers = None
     _HAS_OPENSEARCH = False
 
