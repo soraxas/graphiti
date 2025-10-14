@@ -100,7 +100,10 @@ def _build_directed_uuid_map(pairs: list[tuple[str, str]]) -> dict[str, str]:
 
 class RawEpisode(BaseModel):
     name: str
-    uuid: str | None = Field(default=None)
+    # uuid: str | None = Field(default=None)
+    new_episode_uuid: str
+    # the following is NOT used. TODO: investigate if we ever need to store to existing episode uuid
+    existing_episode_uuid: str = Field(default=None)
     content: str
     source_description: str
     source: EpisodeType
