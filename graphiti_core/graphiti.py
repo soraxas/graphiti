@@ -359,10 +359,16 @@ class Graphiti:
         previous_episodes: list[EpisodicNode],
         entity_types: dict[str, type[BaseModel]] | None,
         excluded_entity_types: list[str] | None,
+        context_prompt: str,
     ) -> tuple[list[EntityNode], dict[str, str], list[tuple[EntityNode, EntityNode]]]:
         """Extract nodes from episode and resolve against existing graph."""
         extracted_nodes = await extract_nodes(
-            self.clients, episode, previous_episodes, entity_types, excluded_entity_types
+            self.clients,
+            episode,
+            previous_episodes,
+            entity_types,
+            excluded_entity_types,
+            context_prompt=context_prompt,
         )
 
         nodes, uuid_map, duplicates = await resolve_extracted_nodes(
@@ -614,6 +620,7 @@ class Graphiti:
         episode_body: str,
         source_description: str,
         reference_time: datetime,
+        context_prompt: str,
         source: EpisodeType = EpisodeType.message,
         group_id: str | None = None,
         uuid: str | None = None,
@@ -728,7 +735,12 @@ class Graphiti:
 
                 # Extract and resolve nodes
                 extracted_nodes = await extract_nodes(
-                    self.clients, episode, previous_episodes, entity_types, excluded_entity_types
+                    self.clients,
+                    episode,
+                    previous_episodes,
+                    entity_types,
+                    excluded_entity_types,
+                    context_prompt=context_prompt,
                 )
 
                 nodes, uuid_map, _ = await resolve_extracted_nodes(
@@ -815,6 +827,7 @@ class Graphiti:
     async def add_episode_bulk(
         self,
         bulk_episodes: list[RawEpisode],
+        context_prompt: str,
         group_id: str | None = None,
         entity_types: dict[str, type[BaseModel]] | None = None,
         excluded_entity_types: list[str] | None = None,
@@ -876,9 +889,10 @@ class Graphiti:
                 )
 
                 episodes = [
-                    await EpisodicNode.get_by_uuid(self.driver, episode.uuid)
-                    if episode.uuid is not None
+                    await EpisodicNode.get_by_uuid(self.driver, episode.existing_episode_uuid)
+                    if episode.existing_episode_uuid is not None
                     else EpisodicNode(
+                        uuid=episode.new_episode_uuid,
                         name=episode.name,
                         labels=[],
                         source=episode.source,

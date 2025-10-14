@@ -20,12 +20,20 @@ import os
 from abc import ABC, abstractmethod
 from collections.abc import Coroutine
 from enum import Enum
-from typing import Any
+from typing import Any, TypeVar
 
 from dotenv import load_dotenv
 
 from graphiti_core.driver.graph_operations.graph_operations import GraphOperationsInterface
 from graphiti_core.driver.search_interface.search_interface import SearchInterface
+try:
+    from opensearchpy import OpenSearch, helpers
+
+    _HAS_OPENSEARCH = True
+except ImportError:
+    OpenSearch = TypeVar("T")
+    helpers = None
+    _HAS_OPENSEARCH = False
 
 logger = logging.getLogger(__name__)
 

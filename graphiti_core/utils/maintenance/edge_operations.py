@@ -94,7 +94,11 @@ async def extract_edges(
     edge_type_map: dict[tuple[str, str], list[str]],
     group_id: str = '',
     edge_types: dict[str, type[BaseModel]] | None = None,
+    context_prompt: str = None,
 ) -> list[EntityEdge]:
+    if context_prompt is None:
+        raise ValueError('context_prompt is required')
+
     start = time()
 
     extract_edges_max_tokens = 16384
@@ -129,7 +133,8 @@ async def extract_edges(
         'previous_episodes': [ep.content for ep in previous_episodes],
         'reference_time': episode.valid_at,
         'edge_types': edge_types_context,
-        'custom_prompt': '',
+        'custom_prompt': context_prompt,
+        'ensure_ascii': clients.ensure_ascii,
     }
 
     facts_missed = True
@@ -158,11 +163,10 @@ async def extract_edges(
 
             missing_facts = reflexion_response.get('missing_facts', [])
 
-            custom_prompt = 'The following facts were missed in a previous extraction: '
-            for fact in missing_facts:
-                custom_prompt += f'\n{fact},'
-
-            context['custom_prompt'] = custom_prompt
+            if missing_facts:
+                context['custom_prompt'] = f'{context_prompt}\n\nThe following facts were missed in a previous extraction: '
+                for fact in missing_facts:
+                    context['custom_prompt'] += f'\n{fact},'
 
             facts_missed = len(missing_facts) != 0
 

@@ -91,11 +91,14 @@ async def extract_nodes(
     previous_episodes: list[EpisodicNode],
     entity_types: dict[str, type[BaseModel]] | None = None,
     excluded_entity_types: list[str] | None = None,
+    context_prompt: str = None,
 ) -> list[EntityNode]:
+    if context_prompt is None:
+        raise ValueError('context_prompt is required')
+
     start = time()
     llm_client = clients.llm_client
     llm_response = {}
-    custom_prompt = ''
     entities_missed = True
     reflexion_iterations = 0
 
@@ -124,7 +127,7 @@ async def extract_nodes(
         'episode_content': episode.content,
         'episode_timestamp': episode.valid_at.isoformat(),
         'previous_episodes': [ep.content for ep in previous_episodes],
-        'custom_prompt': custom_prompt,
+        'custom_prompt': context_prompt,
         'entity_types': entity_types_context,
         'source_description': episode.source_description,
     }
@@ -168,9 +171,10 @@ async def extract_nodes(
 
             entities_missed = len(missing_entities) != 0
 
-            custom_prompt = 'Make sure that the following entities are extracted: '
-            for entity in missing_entities:
-                custom_prompt += f'\n{entity},'
+            if entities_missed:
+                context["custom_prompt"] = f'{context_prompt}\n\nMake sure that the following entities are extracted: '
+                for entity in missing_entities:
+                    context["custom_prompt"] += f'\n{entity},'
 
     filtered_extracted_entities = [entity for entity in extracted_entities if entity.name.strip()]
     end = time()
