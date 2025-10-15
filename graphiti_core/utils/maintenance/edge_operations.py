@@ -134,7 +134,6 @@ async def extract_edges(
         'reference_time': episode.valid_at,
         'edge_types': edge_types_context,
         'custom_prompt': context_prompt,
-        'ensure_ascii': clients.ensure_ascii,
     }
 
     facts_missed = True
