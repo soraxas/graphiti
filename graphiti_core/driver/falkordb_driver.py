@@ -430,7 +430,7 @@ class FalkorDriver(GraphDriver):
             group_values = '|'.join(escaped_group_ids)
             group_filter = f'(@group_id:{group_values})'
 
-        sanitized_query = self.sanitize(query)
+        sanitized_query = self.sanitize(query).strip()
 
         # Remove stopwords and empty tokens from the sanitized query
         query_words = sanitized_query.split()
@@ -441,6 +441,8 @@ class FalkorDriver(GraphDriver):
         if len(sanitized_query.split(' ')) + len(group_ids or '') >= max_query_length:
             return ''
 
-        full_query = group_filter + ' (' + sanitized_query + ')'
+        full_query = group_filter
+        if sanitized_query:
+            full_query += f' ({sanitized_query})'
 
         return full_query

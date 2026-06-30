@@ -311,6 +311,37 @@ class Graphiti:
         else:
             return 'unknown'
 
+    @staticmethod
+    def _merge_extraction_instructions(
+        context_prompt: str | None,
+        custom_extraction_instructions: str | None,
+    ) -> str | None:
+        """Combine a context prompt and custom extraction instructions into one string.
+
+        Both inputs are optional free-form text passed to entity/edge extraction. This
+        merges them into the single ``custom_extraction_instructions`` value the
+        extraction functions expect, stripping each part and joining the non-empty ones
+        with a blank line.
+
+        Parameters
+        ----------
+        context_prompt : str | None
+            Episode-level context to prepend (e.g. background framing for the batch).
+        custom_extraction_instructions : str | None
+            Caller-supplied extraction instructions.
+
+        Returns
+        -------
+        str | None
+            The merged instructions, or ``None`` when both inputs are empty/whitespace.
+        """
+        parts = [
+            part.strip()
+            for part in (context_prompt, custom_extraction_instructions)
+            if part is not None and part.strip()
+        ]
+        return '\n\n'.join(parts) if parts else None
+
     async def close(self):
         """
         Close the connection to the Neo4j database.
@@ -607,6 +638,8 @@ class Graphiti:
         previous_episodes: list[EpisodicNode],
         entity_types: dict[str, type[BaseModel]] | None,
         excluded_entity_types: list[str] | None,
+        context_prompt: str | None = None,
+        custom_extraction_instructions: str | None = None,
     ) -> tuple[
         list[EntityNode], dict[str, str], list[tuple[EntityNode, EntityNode]], dict[str, list[int]]
     ]:
@@ -615,7 +648,14 @@ class Graphiti:
         primary_episode = episodes[0]
 
         extracted_nodes, node_episode_index_map = await extract_nodes(
-            self.clients, episode, previous_episodes, entity_types, excluded_entity_types
+            self.clients,
+            episode,
+            previous_episodes,
+            entity_types=entity_types,
+            excluded_entity_types=excluded_entity_types,
+            custom_extraction_instructions=self._merge_extraction_instructions(
+                context_prompt, custom_extraction_instructions
+            ),
         )
 
         nodes, uuid_map, duplicates = await resolve_extracted_nodes(
@@ -787,6 +827,7 @@ class Graphiti:
         edge_types: dict[str, type[BaseModel]] | None,
         entity_types: dict[str, type[BaseModel]] | None,
         excluded_entity_types: list[str] | None,
+        context_prompt: str | None = None,
         custom_extraction_instructions: str | None = None,
     ) -> tuple[
         dict[str, list[EntityNode]],
@@ -802,7 +843,9 @@ class Graphiti:
             edge_types=edge_types,
             entity_types=entity_types,
             excluded_entity_types=excluded_entity_types,
-            custom_extraction_instructions=custom_extraction_instructions,
+            custom_extraction_instructions=self._merge_extraction_instructions(
+                context_prompt, custom_extraction_instructions
+            ),
         )
 
         # Dedupe extracted nodes in memory
@@ -977,15 +1020,78 @@ class Graphiti:
 
         return await retrieve_episodes(driver, reference_time, last_n, group_ids, source, saga)
 
+    async def create_episodic_node(
+        self,
+        new_episode_uuid: str | None = None,
+        existing_episode_uuid: str | None = None,
+        **kwargs,
+    ) -> EpisodicNode:
+        """Build the EpisodicNode that an ingestion run operates on.
+
+        Resolves the episode for an ``add_episode`` call in one of two mutually
+        exclusive modes, selected by which UUID is supplied:
+
+        * ``new_episode_uuid`` — construct a brand-new :class:`EpisodicNode` with that
+          UUID and the remaining episode fields passed via ``**kwargs``.
+        * ``existing_episode_uuid`` — load an existing episode from the graph by UUID
+          (an update path that is currently unused and kept only for future reference).
+
+        Exactly one of the two UUIDs may be provided. The current business logic only
+        supports creation, so ``new_episode_uuid`` is required.
+
+        Parameters
+        ----------
+        new_episode_uuid : str | None
+            UUID to assign to a newly created episode.
+        existing_episode_uuid : str | None
+            UUID of an existing episode to load instead of creating one.
+        **kwargs
+            Remaining :class:`EpisodicNode` fields (name, group_id, source, content,
+            source_description, created_at, valid_at, etc.) used when creating a new node.
+
+        Returns
+        -------
+        EpisodicNode
+            The newly created or freshly loaded episode node.
+
+        Raises
+        ------
+        ValueError
+            If both ``new_episode_uuid`` and ``existing_episode_uuid`` are provided.
+        AssertionError
+            If ``new_episode_uuid`` is not provided (creation is the only supported path).
+        """
+        if new_episode_uuid is not None and existing_episode_uuid is not None:
+            raise ValueError(
+                'new_episode_uuid and existing_episode_uuid cannot be provided at the same time'
+            )
+
+        assert new_episode_uuid is not None, (
+            'Currently, the business logic only make sense to create a new episode'
+        )
+
+        if new_episode_uuid:
+            # create a new episode
+            return EpisodicNode(
+                uuid=new_episode_uuid,
+                **kwargs,
+            )
+        elif existing_episode_uuid:
+            # update an existing episode
+            # this actually won't be used, but we keep it for future reference
+            return await EpisodicNode.get_by_uuid(self.driver, existing_episode_uuid)
+
     async def add_episode(
         self,
         name: str,
         episode_body: str,
         source_description: str,
         reference_time: datetime,
+        context_prompt: str = '',
         source: EpisodeType = EpisodeType.message,
         group_id: str | None = None,
-        uuid: str | None = None,
+        new_episode_uuid: str = None,
+        existing_episode_uuid: str = None,
         update_communities: bool = False,
         entity_types: dict[str, type[BaseModel]] | None = None,
         excluded_entity_types: list[str] | None = None,
@@ -1016,8 +1122,10 @@ class Graphiti:
             The type of the episode. Defaults to EpisodeType.message.
         group_id : str | None
             An id for the graph partition the episode is a part of.
-        uuid : str | None
-            Optional uuid of the episode.
+        new_episode_uuid : str | None
+            If provided, the new episode will be added with this uuid.
+        existing_episode_uuid : UUID | None
+            If provided, the existing episode will be updated with this uuid.
         update_communities : bool
             Optional. Whether to update communities with new node information
         entity_types : dict[str, BaseModel] | None
@@ -1096,19 +1204,17 @@ class Graphiti:
                 )
 
                 # Get or create episode
-                episode = (
-                    await EpisodicNode.get_by_uuid(self.driver, uuid)
-                    if uuid is not None
-                    else EpisodicNode(
-                        name=name,
-                        group_id=group_id,
-                        labels=[],
-                        source=source,
-                        content=episode_body,
-                        source_description=source_description,
-                        created_at=now,
-                        valid_at=reference_time,
-                    )
+                episode = await self.create_episodic_node(
+                    new_episode_uuid=new_episode_uuid,
+                    existing_episode_uuid=existing_episode_uuid,
+                    name=name,
+                    group_id=group_id,
+                    labels=[],
+                    source=source,
+                    content=episode_body,
+                    source_description=source_description,
+                    created_at=now,
+                    valid_at=reference_time,
                 )
 
                 # Create default edge type map
@@ -1125,7 +1231,9 @@ class Graphiti:
                     previous_episodes,
                     entity_types,
                     excluded_entity_types,
-                    custom_extraction_instructions,
+                    custom_extraction_instructions=self._merge_extraction_instructions(
+                        context_prompt, custom_extraction_instructions
+                    ),
                 )
 
                 nodes, uuid_map, _ = await resolve_extracted_nodes(
@@ -1230,6 +1338,7 @@ class Graphiti:
     async def add_episode_bulk(
         self,
         bulk_episodes: list[RawEpisode],
+        context_prompt: str = '',
         group_id: str | None = None,
         entity_types: dict[str, type[BaseModel]] | None = None,
         excluded_entity_types: list[str] | None = None,
@@ -1317,9 +1426,9 @@ class Graphiti:
                 )
 
                 episodes = [
-                    await EpisodicNode.get_by_uuid(self.driver, episode.uuid)
-                    if episode.uuid is not None
-                    else EpisodicNode(
+                    await self.create_episodic_node(
+                        new_episode_uuid=episode.new_episode_uuid,
+                        existing_episode_uuid=episode.existing_episode_uuid,
                         name=episode.name,
                         labels=[],
                         source=episode.source,
@@ -1356,7 +1465,8 @@ class Graphiti:
                     edge_types,
                     entity_types,
                     excluded_entity_types,
-                    custom_extraction_instructions,
+                    context_prompt=context_prompt,
+                    custom_extraction_instructions=custom_extraction_instructions,
                 )
 
                 # Create Episodic Edges

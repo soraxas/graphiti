@@ -39,6 +39,7 @@ from graphiti_core.models.edges.edge_db_queries import (
 from graphiti_core.models.nodes.node_db_queries import (
     get_entity_node_save_bulk_query,
     get_episode_node_save_bulk_query,
+    get_episode_node_save_query,
 )
 from graphiti_core.nodes import EntityNode, EpisodeType, EpisodicNode
 from graphiti_core.utils.datetime_utils import convert_datetimes_to_strings
@@ -100,7 +101,10 @@ def _build_directed_uuid_map(pairs: list[tuple[str, str]]) -> dict[str, str]:
 
 class RawEpisode(BaseModel):
     name: str
-    uuid: str | None = Field(default=None)
+    # uuid: str | None = Field(default=None)
+    new_episode_uuid: str
+    # the following is NOT used. TODO: investigate if we ever need to store to existing episode uuid
+    existing_episode_uuid: str = Field(default=None)
     content: str
     source_description: str
     source: EpisodeType
@@ -245,7 +249,13 @@ async def add_nodes_and_edges_bulk_tx(
         for edge in episodic_edges:
             await tx.run(episodic_edge_query, **edge.model_dump())
     else:
-        await tx.run(get_episode_node_save_bulk_query(driver.provider), episodes=episodes)
+        if driver.provider == GraphProvider.FALKORDB:
+            # FalkorDB chokes on complex UNWIND payloads in a single CYPHER param header; insert episodes individually.
+            episode_query = get_episode_node_save_query(driver.provider)
+            for episode in episodes:
+                await tx.run(episode_query, **episode)
+        else:
+            await tx.run(get_episode_node_save_bulk_query(driver.provider), episodes=episodes)
         await tx.run(
             get_entity_node_save_bulk_query(driver.provider, nodes),
             nodes=nodes,
